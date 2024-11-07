@@ -46,6 +46,9 @@ bool utilities_blka_snapshot(blk_allocator *blka)
     utilities_print_allocator(blka, fd);
     utilities_print_blocks(blka, fd);
 
+    utilities_print_allocator(blka, stdout);
+    utilities_print_blocks(blka, stdout);
+
     fclose(fd);
 
     return true;
@@ -53,6 +56,19 @@ bool utilities_blka_snapshot(blk_allocator *blka)
 
 void utilities_print_block(blk_meta *blk, size_t index, FILE *fd)
 {
+    if (blk->garbage)
+    {
+        fprintf(fd, "\n┏━━━━━━━━━━━━━━━━━━━━╸END╺━━━━━━━━━━━━━━━━━━━━┓\n");
+    }
+    else if (!blk->prev || blk->prev->garbage)
+    {
+        fprintf(fd, "┏━━━━━━━━━━━━━━━━━━━╸START╺━━━━━━━━━━━━━━━━━━━┓\n");
+    }
+    else
+    {
+        fprintf(fd, "\n┏━━━━━━━━━━━━━━━━━━━╸BLOCK╺━━━━━━━━━━━━━━━━━━━┓\n");
+    }
+
     void *blk_p = blk;
     uint8_t *temp = BLK_TO_U8(blk);
     temp += sizeof(blk_meta);
@@ -62,13 +78,14 @@ void utilities_print_block(blk_meta *blk, size_t index, FILE *fd)
     void *next_free_p = blk->next_free;
     void *prev_free_p = blk->prev_free;
 
-    fprintf(fd, "\n┏━━━━━━━━━━━━━━━━━━━╸BLOCK╺━━━━━━━━━━━━━━━━━━━┓\n");
     fprintf(fd, "┃ %-20s : %-20p ┃\n", "Address", blk_p);
     fprintf(fd, "┃ %-20s : %-20s ┃\n", "Address Aligned",
             IS_ALIGNED(blk_p) ? "Yes" : "No");
     fprintf(fd, "┠╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┨\n");
-    fprintf(fd, "┃ %-20s : %-20zu ┃\n", "Allocator Index", index);
+    fprintf(fd, "┃ %-20s : %-20zu ┃\n", "Index", index);
+    fprintf(fd, "┠╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┨\n");
     fprintf(fd, "┃ %-20s : %-20s ┃\n", "Free", blk->is_free ? "Yes" : "No");
+    fprintf(fd, "┃ %-20s : %-20zu ┃\n", "Size (bytes)", blk->size);
     fprintf(fd, "┠╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┨\n");
     fprintf(fd, "┃ %-20s : %-20p ┃\n", "Next", next_p);
     fprintf(fd, "┃ %-20s : %-20p ┃\n", "Prev", prev_p);
@@ -80,10 +97,11 @@ void utilities_print_block(blk_meta *blk, size_t index, FILE *fd)
     fprintf(fd, "┃ %-20s : %-20s ┃\n", "Checksum Valid",
             blk_validate_checksum(blk) ? "Yes" : "No");
     fprintf(fd, "┠╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┨\n");
-    fprintf(fd, "┃ %-20s : %-20zu ┃\n", "Size (bytes)", blk->size);
     fprintf(fd, "┃ %-20s : %-20p ┃\n", "Data", data_p);
     fprintf(fd, "┃ %-20s : %-20s ┃\n", "Data Aligned",
             IS_ALIGNED(data_p) ? "Yes" : "No");
+    fprintf(fd, "┠╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┨\n");
+    fprintf(fd, "┃ %-20s : %-20zu ┃\n", "Garbage", blk->garbage);
     fprintf(fd, "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n");
 }
 
@@ -91,10 +109,20 @@ void utilities_print_blocks(blk_allocator *blka, FILE *fd)
 {
     blk_meta *current = blka->meta;
     size_t index = 0;
+
+    fprintf(fd, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n");
     while (current->next)
     {
         utilities_print_block(current, index, fd);
-        fprintf(fd, "  %-20s ⇅ %-20s  \n", " ", " ");
+        if (current->garbage)
+        {
+            fprintf(fd, "━━━━━━━━━━━━━━━━━━╸NEXT PAGE╺━━━━━━━━━━━━━━━━━━\n\n");
+        }
+        else
+        {
+            fprintf(fd, "  %-20s ⇅ %-20s  \n", " ", " ");
+        }
+
         current = current->next;
         ++index;
     }
@@ -143,21 +171,6 @@ bool utilities_validate_allocator_size(blk_allocator *blka)
     }
 
     return total_memory == blka->size;
-}
-
-float utilities_memory_footprint(blk_allocator *blka)
-{
-    size_t data_memory = 0;
-    size_t total_needed_memory = sizeof(blk_allocator);
-    struct blk_meta *current = blka->meta;
-    while (current)
-    {
-        total_needed_memory += sizeof(blk_meta) + current->size;
-        data_memory += current->size;
-        current = current->next;
-    }
-
-    return data_memory / (total_needed_memory);
 }
 
 bool utilities_validate_normal_list(blk_allocator *blka)
@@ -230,8 +243,6 @@ void utilities_print_allocator(blk_allocator *blka, FILE *fd)
     fprintf(fd, "┃ %-20s : %-20zu ┃\n", "Size (bytes)", blka->size);
     fprintf(fd, "┃ %-20s : %-20s ┃\n", "Size Valid",
             utilities_validate_allocator_size(blka) ? "Yes" : "No");
-    fprintf(fd, "┃ %-20s : %06.2f%-14s ┃\n", "Wasted Memory",
-            utilities_memory_footprint(blka) * 100, "%");
     fprintf(fd, "┠╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┨\n");
     fprintf(fd, "┃ %-20s : %-20s ┃\n", "List Valid",
             utilities_validate_normal_list(blka) ? "Yes" : "No");

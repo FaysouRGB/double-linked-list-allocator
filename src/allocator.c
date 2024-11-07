@@ -1,14 +1,11 @@
 #include "allocator.h"
 
-#include <pthread.h>
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
 #include <string.h>
-#include <sys/mman.h>
 
 #include "convert.h"
 #include "utilities.h"
+
+// TODO: Free unused maps.
 
 size_t blk_align_size(size_t size)
 {
@@ -33,93 +30,148 @@ size_t blk_align_size(size_t size)
     return aligned_size;
 }
 
-blk_allocator *blk_init_allocator(size_t size)
+void *blk_new_page(size_t size, bool first_one)
 {
-    size_t aligned_size = blk_align_size(size);
-    size_t to_allocate = PAGE_SIZE;
-    while (to_allocate
-           < aligned_size + sizeof(blk_meta) + sizeof(blk_allocator))
+    // Compute size neeeded.
+    size_t memory_used = PAGE_SIZE;
+    size_t memory_needed = 2 * sizeof(blk_meta) + blk_align_size(size)
+        + (first_one ? sizeof(blk_allocator) : 0);
+    while (memory_used < memory_needed)
     {
-        to_allocate += PAGE_SIZE;
+        memory_used += PAGE_SIZE;
     }
 
-    // Allocate a default memory page.
-    void *addr = mmap(NULL, to_allocate, PROT_FLAGS, MAP_FLAGS, -1, 0);
-
-    // Initialize size and mutex.
-    blk_allocator *blka = addr;
-    blka->size = to_allocate;
-
-    // Check if we can't initialize the mutex.
-    if (pthread_mutex_init(&blka->lock, NULL))
+    // Map the memory.
+    void *addr = mmap(NULL, memory_used, PROT_FLAGS, MAP_FLAGS, -1, 0);
+    if (addr == MAP_FAILED)
     {
-        munmap(addr, to_allocate);
         return NULL;
     }
 
-    // Create the metadata of the first block.
-    uint8_t *blka_p = BLKA_TO_U8(blka);
-    blka_p += sizeof(blk_allocator);
-    struct blk_meta *blk = U8_TO_BLK(blka_p);
+    // If it is the first one, initialize the block allocator.
+    if (first_one)
+    {
+        blk_allocator *blka = addr;
 
-    // Initialize the first block.
-    blk->prev = NULL;
-    blk->next = NULL;
-    blk->prev_free = NULL;
-    blk->next_free = NULL;
+        // Reset all bytes of the struct.
+        memset(addr, 0, sizeof(blk_allocator));
 
-    blk->size = to_allocate - sizeof(blk_allocator) - sizeof(blk_meta);
+        // Linked lists.
+        uint8_t *addr_p = addr;
+        addr_p += sizeof(blk_allocator);
+        blka->meta = U8_TO_BLK(addr_p);
+        blka->free_list = blka->meta;
+
+        // Info.
+        pthread_mutex_init(&blka->lock, NULL);
+        blka->size = memory_used;
+
+        // Set the start at the first block.
+        addr = blka->meta;
+    }
+
+    // Create metadata of the first block.
+    blk_meta *blk = addr;
+
+    // Reset all the bytes.
+    memset(addr, 0, sizeof(blk_meta));
+    blk->size = memory_used - (first_one ? sizeof(blk_allocator) : 0)
+        - 2 * sizeof(blk_meta);
     blk->is_free = true;
+
+    // Create the last block.
+    uint8_t *addr_p = addr;
+    addr_p += sizeof(blk_meta) + blk->size;
+    blk_meta *page_end_blk = U8_TO_BLK(addr_p);
+    memset(addr_p, 0, sizeof(blk_meta));
+    page_end_blk->is_free = false;
+    page_end_blk->garbage = memory_used;
+
+    // Link blocks.
+    page_end_blk->prev = blk;
+    blk->next = page_end_blk;
+
+    // Compute the checksums.
     blk->checksum = blk_compute_checksum(blk);
+    page_end_blk->checksum = blk_compute_checksum(page_end_blk);
 
-    // Link the first block.
-    blka->free_list = blk;
-    blka->meta = blk;
+    addr_p = addr;
+    return addr_p - (first_one ? sizeof(blk_allocator) : 0);
+}
 
-    // Return the allocator.
-    return blka;
+blk_allocator *blk_init_allocator(size_t size)
+{
+    return blk_new_page(4096, true);
 }
 
 void blk_cleanup_allocator(blk_allocator *blka)
 {
-    // Unmap all the memory associated to the allocator.
     pthread_mutex_destroy(&blka->lock);
+
+    // Get the last block of the previous page.
+    blk_meta *page_end_blk = blka->meta;
+    while (page_end_blk->next)
+    {
+        page_end_blk = page_end_blk->next;
+    }
+
+    // Save the size of this page and go back 1 time.
+    size_t current_page_size = page_end_blk->garbage;
+    page_end_blk = page_end_blk->prev;
+
+    // Stop when we are at the first block.
+    while (page_end_blk && page_end_blk->prev)
+    {
+        while (page_end_blk->prev && page_end_blk->size == 0)
+        {
+            page_end_blk = page_end_blk->prev;
+        }
+
+        munmap(page_end_blk->next, current_page_size);
+
+        current_page_size = page_end_blk->garbage;
+        page_end_blk = page_end_blk->prev;
+    }
+
     munmap(blka, blka->size);
+}
+
+void __blk_insert_to_free_list(blk_allocator *blka, blk_meta *blk)
+{
+    blk->next_free = blka->free_list;
+    blk->prev_free = NULL;
+
+    if (blka->free_list)
+    {
+        blka->free_list->prev_free = blk;
+        blka->free_list->checksum = blk_compute_checksum(blka->free_list);
+    }
+
+    blka->free_list = blk;
 }
 
 void blk_extend_allocator(blk_allocator *blka, size_t size)
 {
-    size_t aligned_size = blk_align_size(size);
-    size_t to_allocate = PAGE_SIZE;
-    while (to_allocate
-           < aligned_size + sizeof(blk_meta) + sizeof(blk_allocator))
+    // Create a new page.
+    blk_meta *new_blk = blk_new_page(size, false);
+
+    // Get the last block of the previous page.
+    blk_meta *last_blk = blka->meta;
+    while (last_blk->next)
     {
-        to_allocate += PAGE_SIZE;
+        last_blk = last_blk->next;
     }
 
-    blk_meta *new_blk = mmap(NULL, to_allocate, PROT_FLAGS, MAP_FLAGS, -1, 0);
-    if (new_blk == MAP_FAILED)
-    {
-        return;
-    }
+    // Link the two pages.
+    last_blk->next = new_blk;
+    new_blk->prev = last_blk;
 
-    new_blk->size = to_allocate - sizeof(blk_meta);
-    new_blk->is_free = true;
-    new_blk->prev = NULL;
-    new_blk->next = NULL;
-    new_blk->prev_free = NULL;
-    new_blk->next_free = NULL;
+    // Insert new block in the free list.
+    __blk_insert_to_free_list(blka, new_blk);
 
-    if (blka->free_list)
-    {
-        blka->free_list->prev_free = new_blk;
-        new_blk->next_free = blka->free_list;
-    }
-
-    blka->free_list = new_blk;
+    // Compute the checksums.
+    last_blk->checksum = blk_compute_checksum(last_blk);
     new_blk->checksum = blk_compute_checksum(new_blk);
-
-    blka->size += to_allocate;
 }
 
 void *blk_malloc(blk_allocator *blka, size_t size)
@@ -127,35 +179,36 @@ void *blk_malloc(blk_allocator *blka, size_t size)
     // Align the size.
     size_t aligned_size = blk_align_size(size);
 
-    blk_meta *best_blk = blka->free_list;
-
     // Check if all blocks are locked.
+    blk_meta *best_blk = blka->free_list;
     if (!best_blk)
     {
         // Extend allocator.
         blk_extend_allocator(blka, size);
         best_blk = blka->free_list;
     }
-
-    // Find the best block (aka. closest size to aligned_size).
-    blk_meta *blk = best_blk->next_free;
-    while (blk)
+    else
     {
-        if (blk->size >= aligned_size
-            && blk->size - aligned_size > best_blk->size - aligned_size)
+        // Find the best block (aka. closest size to aligned_size).
+        blk_meta *blk = best_blk->next_free;
+        while (blk)
         {
-            best_blk = blk;
+            if (blk->size >= aligned_size
+                && blk->size - aligned_size > best_blk->size - aligned_size)
+            {
+                best_blk = blk;
+            }
+
+            blk = blk->next_free;
         }
 
-        blk = blk->next_free;
-    }
-
-    // Check if we found a block with enough size.
-    if (best_blk->size < aligned_size)
-    {
-        // Extend allocator.
-        blk_extend_allocator(blka, size);
-        best_blk = blka->free_list;
+        // Check if we found a block with enough size.
+        if (best_blk->size < aligned_size)
+        {
+            // Extend allocator.
+            blk_extend_allocator(blka, size);
+            best_blk = blka->free_list;
+        }
     }
 
     // Split the block if it is large enough.
@@ -164,17 +217,10 @@ void *blk_malloc(blk_allocator *blka, size_t size)
         // Split
         blk_split(best_blk, aligned_size);
 
-        // Push front new_blk into the double linked free list.
+        // Insert the new block into the free list.
         blk_meta *child = best_blk->next;
-        child->next_free = blka->free_list;
-        child->prev_free = NULL;
-
-        if (blka->free_list)
-        {
-            blka->free_list->prev_free = child;
-        }
-
-        blka->free_list = child;
+        __blk_insert_to_free_list(blka, child);
+        child->checksum = blk_compute_checksum(child);
     }
 
     // Remove the block from the free list.
@@ -202,7 +248,7 @@ void blk_free(blk_allocator *blka, void *ptr)
 
     // Get the block header.
     uint8_t *ptr_p = ptr;
-    ptr_p -= sizeof(blk_meta) - sizeof(char *) + 1;
+    ptr_p -= sizeof(blk_meta);
     ptr = ptr_p;
     blk_meta *blk = ptr;
 
@@ -219,36 +265,24 @@ void blk_free(blk_allocator *blka, void *ptr)
     // Try to merge.
     blk = blk_merge(blka, blk);
 
-    // Push front the block into the double linked free list.
-    blk->prev_free = NULL;
-    if (blka->free_list)
-    {
-        blk->next_free = blka->free_list;
-        blka->free_list->prev_free = blk;
-    }
-    else
-    {
-        blk->next_free = NULL;
-    }
+    // Insert the new block into the free list.
+    __blk_insert_to_free_list(blka, blk);
 
-    blka->free_list = blk;
-
-    // Prevent double free.
+    // Compute the checksum of the block.
     blk->checksum = blk_compute_checksum(blk);
 }
 
 void *blk_calloc(blk_allocator *blka, size_t size)
 {
     // Call malloc.
-    size_t aligned_size = blk_align_size(size);
-    void *ptr = blk_malloc(blka, aligned_size);
+    void *ptr = blk_malloc(blka, size);
     if (!ptr)
     {
         return NULL;
     }
 
     // Set all bytes of data to 0.
-    memset(ptr, 0, aligned_size);
+    memset(ptr, 0, size);
 
     // Return the data pointer.
     return ptr;
@@ -258,7 +292,7 @@ void *blk_realloc(blk_allocator *blka, void *ptr, size_t new_size)
 {
     // Get the block header.
     uint8_t *ptr_p = ptr;
-    ptr_p -= sizeof(blk_meta) - sizeof(char *) + 1;
+    ptr_p -= sizeof(blk_meta);
     void *temp = ptr_p;
     blk_meta *blk = temp;
 
@@ -269,57 +303,30 @@ void *blk_realloc(blk_allocator *blka, void *ptr, size_t new_size)
         return ptr;
     }
 
-    // If the block that follows is free, merge and allocate enough.
-    if (blk->next && blk->next->is_free)
+    // If a neighbor is free, merge (and split).
+    if ((blk->next && blk->next->is_free) || (blk->prev && blk->prev->is_free))
     {
-        // Merge with block after me.
+        // Merge.
         blk = blk_merge(blka, blk);
 
-        // Update checksum.
+        // If we can split, split.
+        size_t aligned_size = blk_align_size(new_size);
+        if (blk->size >= aligned_size + sizeof(blk_meta) + MIN_DATA_SIZE)
+        {
+            // Split
+            blk_split(blk, aligned_size);
+
+            // Insert the new block into the free list.
+            blk_meta *child = blk->next;
+            __blk_insert_to_free_list(blka, child);
+            child->checksum = blk_compute_checksum(child);
+        }
+
+        // Compute the block's checksum.
         blk->checksum = blk_compute_checksum(blk);
 
-        // Then split the block.
-        blk_split(blk, new_size);
-
-        // Push front new_blk into the double linked free list.
-        blk_meta *child = blk->next;
-        child->next_free = blka->free_list;
-        child->prev_free = NULL;
-
-        if (blka->free_list)
-        {
-            blka->free_list->prev_free = child;
-        }
-
-        blka->free_list = child;
-
-        // Return ptr.
-        return ptr;
-    }
-
-    // If the block that preceed is free, merge and allocate enough.
-    if (blk->prev && blk->prev->is_free)
-    {
-        // Merge with block after me.
-        blk = blk_merge(blka, blk);
-
-        // Then split the block.
-        blk_split(blk, new_size);
-
-        // Push front new_blk into the double linked free list.
-        blk_meta *child = blk->next;
-        child->next_free = blka->free_list;
-        child->prev_free = NULL;
-
-        if (blka->free_list)
-        {
-            blka->free_list->prev_free = child;
-        }
-
-        blka->free_list = child;
-
-        // Return ptr.
-        return ptr;
+        // Return ptr back or a new pointer.
+        return BLK_TO_U8(blk) + sizeof(blk_meta);
     }
 
     // Else sadly we need to find a new place.
@@ -331,8 +338,11 @@ void *blk_realloc(blk_allocator *blka, void *ptr, size_t new_size)
     // Set the old block to free.
     blk_free(blka, blk);
 
+    // Compute the block's checksum.
+    blk->checksum = blk_compute_checksum(blk);
+
     // Return the data pointer.
-    return ptr;
+    return new_ptr;
 }
 
 void blk_split(blk_meta *blk, size_t size)
@@ -340,6 +350,7 @@ void blk_split(blk_meta *blk, size_t size)
     // Create the new block.
     uint8_t *blk_p = BLK_TO_U8(blk);
     blk_p += size + sizeof(blk_meta);
+    memset(blk_p, 0, sizeof(blk_meta));
     blk_meta *new_blk = U8_TO_BLK(blk_p);
 
     // Initialize the new block.
@@ -349,30 +360,22 @@ void blk_split(blk_meta *blk, size_t size)
     // Insert new_blk into the double linked list.
     new_blk->next = blk->next;
     new_blk->prev = blk;
-    if (blk->next)
+    if (new_blk->next)
     {
-        blk->next->prev = new_blk;
+        new_blk->next->prev = new_blk;
+        new_blk->next->checksum = blk_compute_checksum(new_blk->next);
     }
 
     blk->next = new_blk;
 
     // Adjust blk size.
     blk->size = size;
-
-    // Compute new_blk checksum.
-    new_blk->checksum = blk_compute_checksum(new_blk);
 }
 
 blk_meta *blk_merge(blk_allocator *blka, blk_meta *blk)
 {
-    // Check if next and prev are continuous in memory.
-    uint8_t *blk_p = BLK_TO_U8(blk);
-    uint8_t *next_p = BLK_TO_U8(blk->next);
-    uint8_t *prev_p = BLK_TO_U8(blk->prev);
-
     // Merge with the previous block if it's free.
-    if (blk->prev && blk->prev->is_free
-        && prev_p == blk_p - blk->prev->size - sizeof(blk_meta))
+    if (blk->prev && blk->prev->is_free)
     {
         // Remove the this block from the free list.
         blk_remove_from_free_list(blka, blk);
@@ -380,21 +383,17 @@ blk_meta *blk_merge(blk_allocator *blka, blk_meta *blk)
         // Merge with the previous block.
         blk_meta *prev = blk->prev;
         prev->next = blk->next;
-        if (blk->next)
+        if (prev->next)
         {
-            blk->next->prev = prev;
+            prev->next->prev = prev;
         }
 
         prev->size += blk->size + sizeof(blk_meta);
-
-        // Corrupt checksum just for security (free called on a merge one).
-        blk->checksum = MIN_DATA_SIZE - 1;
         blk = prev;
     }
 
     // Merge with the next block if it's free.
-    if (blk->next && blk->next->is_free
-        && next_p == blk_p + blk->size + sizeof(blk_meta))
+    if (blk->next && blk->next->is_free)
     {
         // Remove the next block from the free list.
         blk_remove_from_free_list(blka, blk->next);
@@ -408,9 +407,6 @@ blk_meta *blk_merge(blk_allocator *blka, blk_meta *blk)
         }
 
         blk->size += next->size + sizeof(blk_meta);
-
-        // Corrupt checksum just for security (free called on a merge one).
-        next->checksum = MIN_DATA_SIZE - 1;
     }
 
     // Return the block.
@@ -445,15 +441,19 @@ void blk_remove_from_free_list(blk_allocator *blka, blk_meta *blk)
         blka->free_list = blk->next_free;
     }
     // Case II: in the middle of the list.
-    else if (blk->prev_free && blk->next_free)
+    else if (blk->next_free)
     {
         blk->prev_free->next_free = blk->next_free;
+        blk->prev_free->checksum = blk_compute_checksum(blk->prev_free);
+
         blk->next_free->prev_free = blk->prev_free;
+        blk->next_free->checksum = blk_compute_checksum(blk->next_free);
     }
     // Case III: at the end of the list.
     else
     {
         blk->prev_free->next_free = NULL;
+        blk->prev_free->checksum = blk_compute_checksum(blk->prev_free);
     }
 
     // Detach blk from the free list.

@@ -5,6 +5,15 @@
 
 #include "allocator.h"
 
+/// @brief Macro for red.
+#define RED "\x1b[31m"
+
+/// @brief Macro for green.
+#define GREEN "\x1b[32m"
+
+/// @brief Macro to end color.
+#define RESET "\x1b[0m"
+
 /// @brief Macro to print an error log.
 #define PRINT_ERROR(message) fprintf(stderr, "%s\n", message)
 
@@ -48,11 +57,6 @@ int utilities_number_of_free_blocks(blk_allocator *blka);
 /// @param blka The block allocator.
 /// @return true if it matches, false otherwise.
 bool utilities_validate_allocator_size(blk_allocator *blka);
-
-/// @brief Get the memory footprint of the allocator.
-/// @param blka The block allocator.
-/// @return A value between 0 and 1: the higher, the more inefficient.
-float utilities_memory_footprint(blk_allocator *blka);
 
 /// @brief Validate the normal double list of the allocator.
 /// @param blka The block allocator.
