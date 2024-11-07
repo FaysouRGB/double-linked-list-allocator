@@ -1,6 +1,5 @@
 #include "utilities.h"
 
-#include <stdbool.h>
 #include <stdlib.h>
 
 bool utilities_validate_calloc(void *ptr, size_t size)
