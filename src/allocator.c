@@ -187,7 +187,9 @@ void *blk_malloc(blk_allocator *blka, size_t size)
     best_blk->checksum = blk_compute_checksum(best_blk);
 
     // Return the block.
-    return best_blk->data - 1;
+    uint8_t *temp = BLK_TO_U8(best_blk);
+    temp += sizeof(blk_meta);
+    return temp;
 }
 
 void blk_free(blk_allocator *blka, void *ptr)

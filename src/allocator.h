@@ -28,8 +28,8 @@ struct blk_meta
 
     // Block info
     size_t size;
+    size_t garbage;
     bool is_free;
-    char data[];
 };
 
 typedef struct blk_meta blk_meta;
