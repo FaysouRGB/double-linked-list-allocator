@@ -1,200 +1,70 @@
 #include "utilities.h"
 
 #include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
+#include <stdlib.h>
 
-#include "allocator.h"
-
-uint8_t *utilities_blka_uint(blk_allocator *blka)
+bool utilities_validate_calloc(void *ptr, size_t size)
 {
-    void *blka_void_p = blka;
-    return blka_void_p;
-}
-
-uint8_t *utilities_blk_uint(blk_meta *blk)
-{
-    void *blka_void_p = blk;
-    return blka_void_p;
-}
-
-blk_allocator *utilities_uint_blka(uint8_t *blka)
-{
-    void *blka_void_p = blka;
-    return blka_void_p;
-}
-
-blk_meta *utilities_uint_blk(uint8_t *blk)
-{
-    void *blka_void_p = blk;
-    return blka_void_p;
-}
-
-static int utilities_number_of_blocks(blk_allocator *blka)
-{
-    int count = 0;
-    struct blk_meta *blk = blka->meta;
-    while (blk)
+    uint8_t *ptr_p = ptr;
+    for (size_t i = 0; i < size; ++i)
     {
-        ++count;
-        blk = blk->next;
-    }
-
-    return count;
-}
-
-static float utilities_memory_footprint(blk_allocator *blka)
-{
-    size_t data_memory = 0;
-    size_t total_needed_memory = 0;
-    struct blk_meta *blk = blka->meta;
-    while (blk)
-    {
-        total_needed_memory += sizeof(blk_meta) + blk->size;
-        data_memory += blk->size;
-        blk = blk->next;
-    }
-
-    return data_memory / (total_needed_memory + sizeof(blk_allocator));
-}
-
-static int utilities_block_number(blk_allocator *blka, blk_meta *blk)
-{
-    int number = 0;
-    blk_meta *meta = blka->meta;
-    while (meta != blk)
-    {
-        number += 1;
-        meta = meta->next;
-    }
-
-    return number;
-}
-
-static int utilities_free_number(blk_allocator *blka)
-{
-    int number = 0;
-    blk_meta *meta = blka->meta;
-    while (meta)
-    {
-        if (meta->is_free)
+        if (ptr_p[i])
         {
-            number += 1;
+            return false;
         }
-
-        meta = meta->next;
     }
 
-    return number;
+    return true;
 }
 
-static int utilities_validate_lists(blk_allocator *blka)
+bool utilities_blka_snapshot(blk_allocator *blka)
 {
-    // Check that lists are the same both ways and that they are bounded by
-    // null.
-    // Validate double linked list.
-    blk_meta *prev = blka->meta;
-    if (prev->prev)
+    // Track the snapshot number across calls.
+    static int number = -1;
+    number += 1;
+
+    // Create the filename.
+    size_t size = snprintf(NULL, 0, "%i.snapshot", number);
+    char *filename = malloc(size + 1);
+    if (!filename)
     {
-        return 0;
+        return false;
     }
 
-    blk_meta *current = prev->next;
-    while (current)
-    {
-        if (current->prev != prev)
-        {
-            return 0;
-        }
+    snprintf(filename, size + 1, "%i.snapshot", number);
 
-        prev = current;
-        current = current->next;
+    // Create the snapshot file.
+    FILE *fd = fopen(filename, "w");
+    free(filename);
+    if (!fd)
+    {
+        return false;
     }
 
-    if (prev->next)
-    {
-        return 0;
-    }
+    // Write logs.
+    utilities_print_allocator(blka, fd);
+    utilities_print_blocks(blka, fd);
 
-    // Validate double linked free list.
-    prev = blka->free_list;
-    if (!prev)
-    {
-        return 0;
-    }
+    fclose(fd);
 
-    if (prev->prev_free || prev->is_free == false)
-    {
-        return 0;
-    }
-
-    current = prev->next_free;
-    while (current)
-    {
-        if (current->prev != prev || current->is_free == false)
-        {
-            return 0;
-        }
-
-        prev = current;
-        current = current->next;
-    }
-
-    if (prev->next_free)
-    {
-        return 0;
-    }
-
-    return 1;
+    return true;
 }
 
-static int is_aligned(void *ptr)
-{
-    return ((uintptr_t)ptr % sizeof(long double)) == 0;
-}
-
-void utilities_print_allocator(blk_allocator *blka, FILE *fd)
-{
-    void *blka_p = blka;
-    void *meta_p = blka->meta;
-    void *free_list_p = blka->free_list;
-
-    fprintf(fd, "\n┏━━━━━━━━━━━━━━━━╸ ALLOCATOR ╺━━━━━━━━━━━━━━━━┓\n");
-    fprintf(fd, "┃ %-20s : %-20p ┃\n", "Address", blka_p);
-    fprintf(fd, "┃ %-20s : %-20s ┃\n", "Aligned",
-            is_aligned(blka) ? "Yes" : "No");
-    fprintf(fd, "┠╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┨\n");
-    fprintf(fd, "┃ %-20s : %-20p ┃\n", "Meta", meta_p);
-    fprintf(fd, "┃ %-20s : %-20p ┃\n", "Free List", free_list_p);
-    fprintf(fd, "┠╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┨\n");
-    fprintf(fd, "┃ %-20s : %-20i ┃\n", "Blocks",
-            utilities_number_of_blocks(blka));
-    fprintf(fd, "┃ %-20s : %-20i ┃\n", "Free Blocks",
-            utilities_free_number(blka));
-    fprintf(fd, "┠╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┨\n");
-    fprintf(fd, "┃ %-20s : %-20zu ┃\n", "Size (bytes)", blka->size);
-    fprintf(fd, "┃ %-20s : %06.2f%-14s ┃\n", "Wasted Memory",
-            utilities_memory_footprint(blka) * 100, "%");
-    fprintf(fd, "┃ %-20s : %-20s ┃\n", "Lists Valid",
-            utilities_validate_lists(blka) ? "Yes" : "No");
-    fprintf(fd, "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n");
-}
-
-void utilities_print_block(blk_allocator *blka, blk_meta *blk, FILE *fd)
+void utilities_print_block(blk_meta *blk, size_t index, FILE *fd)
 {
     void *blk_p = blk;
+    void *data_p = blk->data - 1;
     void *next_p = blk->next;
     void *prev_p = blk->prev;
     void *next_free_p = blk->next_free;
     void *prev_free_p = blk->prev_free;
 
-    fprintf(fd, "\n┏━━━━━━━━━━━━━━━━━━╸ BLOCK ╺━━━━━━━━━━━━━━━━━━┓\n");
+    fprintf(fd, "\n┏━━━━━━━━━━━━━━━━━━━╸BLOCK╺━━━━━━━━━━━━━━━━━━━┓\n");
     fprintf(fd, "┃ %-20s : %-20p ┃\n", "Address", blk_p);
-    fprintf(fd, "┃ %-20s : %-20s ┃\n", "Aligned",
-            is_aligned(blk) ? "Yes" : "No");
+    fprintf(fd, "┃ %-20s : %-20s ┃\n", "Address Aligned",
+            IS_ALIGNED(blk_p) ? "Yes" : "No");
     fprintf(fd, "┠╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┨\n");
-    fprintf(fd, "┃ %-20s : %-20i ┃\n", "Index",
-            utilities_block_number(blka, blk));
+    fprintf(fd, "┃ %-20s : %-20zu ┃\n", "Allocator Index", index);
     fprintf(fd, "┃ %-20s : %-20s ┃\n", "Free", blk->is_free ? "Yes" : "No");
     fprintf(fd, "┠╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┨\n");
     fprintf(fd, "┃ %-20s : %-20p ┃\n", "Next", next_p);
@@ -208,21 +78,161 @@ void utilities_print_block(blk_allocator *blka, blk_meta *blk, FILE *fd)
             blk_validate_checksum(blk) ? "Yes" : "No");
     fprintf(fd, "┠╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┨\n");
     fprintf(fd, "┃ %-20s : %-20zu ┃\n", "Size (bytes)", blk->size);
-    fprintf(fd, "┃ %-20s : %-20p ┃\n", "Data", blk->data);
-    fprintf(fd, "┃ %-20s : %-20s ┃\n", "Aligned",
-            is_aligned(blk->data) ? "Yes" : "No");
+    fprintf(fd, "┃ %-20s : %-20p ┃\n", "Data", data_p);
+    fprintf(fd, "┃ %-20s : %-20s ┃\n", "Data Aligned",
+            IS_ALIGNED(data_p) ? "Yes" : "No");
     fprintf(fd, "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n");
 }
 
-void utilities_print_all_blocks(blk_allocator *blka, FILE *fd)
+void utilities_print_blocks(blk_allocator *blka, FILE *fd)
 {
-    blk_meta *blk = blka->meta;
-    while (blk->next)
+    blk_meta *current = blka->meta;
+    size_t index = 0;
+    while (current->next)
     {
-        utilities_print_block(blka, blk, fd);
+        utilities_print_block(current, index, fd);
         fprintf(fd, "  %-20s ⇅ %-20s  \n", " ", " ");
-        blk = blk->next;
+        current = current->next;
+        ++index;
     }
 
-    utilities_print_block(blka, blk, fd);
+    utilities_print_block(current, index, fd);
+}
+
+int utilities_number_of_blocks(blk_allocator *blka)
+{
+    blk_meta *current = blka->meta;
+    int number = 0;
+    while (current)
+    {
+        ++number;
+        current = current->next;
+    }
+
+    return number;
+}
+
+int utilities_number_of_free_blocks(blk_allocator *blka)
+{
+    blk_meta *current = blka->meta;
+    int number = 0;
+    while (current)
+    {
+        if (current->is_free)
+        {
+            ++number;
+        }
+
+        current = current->next;
+    }
+
+    return number;
+}
+
+bool utilities_validate_allocator_size(blk_allocator *blka)
+{
+    size_t total_memory = sizeof(blk_allocator);
+    struct blk_meta *current = blka->meta;
+    while (current)
+    {
+        total_memory += sizeof(blk_meta) + current->size;
+        current = current->next;
+    }
+
+    return total_memory == blka->size;
+}
+
+float utilities_memory_footprint(blk_allocator *blka)
+{
+    size_t data_memory = 0;
+    size_t total_needed_memory = sizeof(blk_allocator);
+    struct blk_meta *current = blka->meta;
+    while (current)
+    {
+        total_needed_memory += sizeof(blk_meta) + current->size;
+        data_memory += current->size;
+        current = current->next;
+    }
+
+    return data_memory / (total_needed_memory);
+}
+
+bool utilities_validate_list(blk_allocator *blka)
+{
+    blk_meta *prev = blka->meta;
+    if (prev->prev)
+    {
+        return false;
+    }
+
+    for (blk_meta *current = prev->next; current; current = current->next)
+    {
+        if (current->prev != prev)
+        {
+            return false;
+        }
+
+        prev = current;
+    }
+
+    if (prev->next)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+bool utilities_validate_free_list(blk_allocator *blka)
+{
+    blk_meta *prev = blka->free_list;
+    if (!prev || prev->prev_free || !prev->is_free)
+    {
+        return false;
+    }
+
+    for (blk_meta *current = prev->next_free; current;
+         current = current->next_free)
+    {
+        if (current->prev_free != prev || !current->is_free)
+        {
+            return false;
+        }
+
+        prev = current;
+    }
+
+    return prev->next_free ? false : true;
+}
+
+void utilities_print_allocator(blk_allocator *blka, FILE *fd)
+{
+    void *blka_p = blka;
+    void *meta_p = blka->meta;
+    void *free_list_p = blka->free_list;
+
+    fprintf(fd, "\n┏━━━━━━━━━━━━━━━━╸ ALLOCATOR ╺━━━━━━━━━━━━━━━━┓\n");
+    fprintf(fd, "┃ %-20s : %-20p ┃\n", "Address", blka_p);
+    fprintf(fd, "┃ %-20s : %-20s ┃\n", "Address Aligned",
+            IS_ALIGNED(blka) ? "Yes" : "No");
+    fprintf(fd, "┠╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┨\n");
+    fprintf(fd, "┃ %-20s : %-20p ┃\n", "Meta", meta_p);
+    fprintf(fd, "┃ %-20s : %-20p ┃\n", "Free List", free_list_p);
+    fprintf(fd, "┠╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┨\n");
+    fprintf(fd, "┃ %-20s : %-20i ┃\n", "Blocks",
+            utilities_number_of_blocks(blka));
+    fprintf(fd, "┃ %-20s : %-20i ┃\n", "Free Blocks",
+            utilities_number_of_free_blocks(blka));
+    fprintf(fd, "┠╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┨\n");
+    fprintf(fd, "┃ %-20s : %-20zu ┃\n", "Size (bytes)", blka->size);
+    fprintf(fd, "┃ %-20s : %-20s ┃\n", "Size Valid",
+            utilities_validate_allocator_size(blka) ? "Yes" : "No");
+    fprintf(fd, "┃ %-20s : %06.2f%-14s ┃\n", "Wasted Memory",
+            utilities_memory_footprint(blka) * 100, "%");
+    fprintf(fd, "┠╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┨\n");
+    fprintf(fd, "┃ %-20s : %-20s ┃\n", "List Valid",
+            utilities_validate_list(blka) ? "Yes" : "No");
+    fprintf(fd, "┃ %-20s : %-20s ┃\n", "Free List Valid",
+            utilities_validate_free_list(blka) ? "Yes" : "No");
+    fprintf(fd, "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n");
 }

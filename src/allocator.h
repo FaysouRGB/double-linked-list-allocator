@@ -29,7 +29,7 @@ struct blk_meta
     // Block info
     size_t size;
     bool is_free;
-    char *data;
+    char data[];
 };
 
 typedef struct blk_meta blk_meta;

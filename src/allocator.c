@@ -7,6 +7,7 @@
 #include <string.h>
 #include <sys/mman.h>
 
+#include "convert.h"
 #include "utilities.h"
 
 size_t blk_align_size(size_t size)
@@ -57,9 +58,9 @@ blk_allocator *blk_init_allocator(size_t size)
     }
 
     // Create the metadata of the first block.
-    uint8_t *blka_p = BLKA_TO_UINT(blka);
+    uint8_t *blka_p = BLKA_TO_U8(blka);
     blka_p += sizeof(blk_allocator);
-    struct blk_meta *blk = UINT_TO_BLK(blka_p);
+    struct blk_meta *blk = U8_TO_BLK(blka_p);
 
     // Initialize the first block.
     blk->prev = NULL;
@@ -186,7 +187,7 @@ void *blk_malloc(blk_allocator *blka, size_t size)
     best_blk->checksum = blk_compute_checksum(best_blk);
 
     // Return the block.
-    return best_blk->data;
+    return best_blk->data - 1;
 }
 
 void blk_free(blk_allocator *blka, void *ptr)
@@ -335,9 +336,9 @@ void *blk_realloc(blk_allocator *blka, void *ptr, size_t new_size)
 void blk_split(blk_meta *blk, size_t size)
 {
     // Create the new block.
-    uint8_t *blk_p = BLK_TO_UINT(blk);
+    uint8_t *blk_p = BLK_TO_U8(blk);
     blk_p += size + sizeof(blk_meta);
-    blk_meta *new_blk = UINT_TO_BLK(blk_p);
+    blk_meta *new_blk = U8_TO_BLK(blk_p);
 
     // Initialize the new block.
     new_blk->size = blk->size - size - sizeof(blk_meta);
@@ -363,9 +364,9 @@ void blk_split(blk_meta *blk, size_t size)
 blk_meta *blk_merge(blk_allocator *blka, blk_meta *blk)
 {
     // Check if next and prev are continuous in memory.
-    uint8_t *blk_p = BLK_TO_UINT(blk);
-    uint8_t *next_p = BLK_TO_UINT(blk->next);
-    uint8_t *prev_p = BLK_TO_UINT(blk->prev);
+    uint8_t *blk_p = BLK_TO_U8(blk);
+    uint8_t *next_p = BLK_TO_U8(blk->next);
+    uint8_t *prev_p = BLK_TO_U8(blk->prev);
 
     // Merge with the previous block if it's free.
     if (blk->prev && blk->prev->is_free
@@ -418,7 +419,7 @@ uint32_t blk_compute_checksum(blk_meta *blk)
 {
     // Add every fields except the checksum field.
     uint32_t checksum = 0;
-    uint8_t *blk_p = BLK_TO_UINT(blk);
+    uint8_t *blk_p = BLK_TO_U8(blk);
     for (size_t i = sizeof(uint32_t); i < sizeof(blk_meta); ++i)
     {
         checksum += blk_p[i];
