@@ -69,4 +69,7 @@ bool utilities_validate_free_list(blk_allocator *blka);
 /// @param fd The file descriptor to write to.
 void utilities_print_allocator(blk_allocator *blka, FILE *fd);
 
+/// @brief Print different type sizes, useful for debugging.
+void utilities_print_sizes(FILE *fd);
+
 #endif /* ! UTILITIES_H */

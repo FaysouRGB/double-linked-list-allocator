@@ -5,6 +5,8 @@
 
 int main(void)
 {
+    utilities_print_sizes(stdout);
+
     // Snapshot 0.
     // Initialize the allocator.
     blk_allocator *blka = blk_init_allocator(5);

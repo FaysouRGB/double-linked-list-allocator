@@ -53,7 +53,7 @@ bool utilities_blka_snapshot(blk_allocator *blka)
 void utilities_print_block(blk_meta *blk, size_t index, FILE *fd)
 {
     void *blk_p = blk;
-    void *data_p = blk->data - 1;
+    void *data_p = blk->data;
     void *next_p = blk->next;
     void *prev_p = blk->prev;
     void *next_free_p = blk->next_free;
@@ -234,5 +234,23 @@ void utilities_print_allocator(blk_allocator *blka, FILE *fd)
             utilities_validate_list(blka) ? "Yes" : "No");
     fprintf(fd, "┃ %-20s : %-20s ┃\n", "Free List Valid",
             utilities_validate_free_list(blka) ? "Yes" : "No");
+    fprintf(fd, "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n");
+}
+
+void utilities_print_sizes(FILE *fd)
+{
+    char data[] = { 0 };
+    fprintf(fd, "\n┏━━━━━━━━━━━━━━━━━━╸ SIZES ╺━━━━━━━━━━━━━━━━━━┓\n");
+    fprintf(fd, "┃ %-20s : %-20zu ┃\n", "uint32_t", sizeof(uint32_t));
+    fprintf(fd, "┃ %-20s : %-20zu ┃\n", "struct blk_meta *",
+            sizeof(struct blk_meta *));
+    fprintf(fd, "┃ %-20s : %-20zu ┃\n", "size_t", sizeof(size_t));
+    fprintf(fd, "┃ %-20s : %-20zu ┃\n", "bool", sizeof(bool));
+    fprintf(fd, "┃ %-20s : %-20zu ┃\n", "char data[]", sizeof(data));
+    fprintf(fd, "┃ %-20s : %-20zu ┃\n", "pthread_mutex_t",
+            sizeof(pthread_mutex_t));
+    fprintf(fd, "┠╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┨\n");
+    fprintf(fd, "┃ %-20s : %-20zu ┃\n", "blk_allocator", sizeof(blk_allocator));
+    fprintf(fd, "┃ %-20s : %-20zu ┃\n", "blk_meta", sizeof(blk_meta));
     fprintf(fd, "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n");
 }
