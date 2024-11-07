@@ -160,7 +160,7 @@ float utilities_memory_footprint(blk_allocator *blka)
     return data_memory / (total_needed_memory);
 }
 
-bool utilities_validate_list(blk_allocator *blka)
+bool utilities_validate_normal_list(blk_allocator *blka)
 {
     blk_meta *prev = blka->meta;
     if (prev->prev)
@@ -234,7 +234,7 @@ void utilities_print_allocator(blk_allocator *blka, FILE *fd)
             utilities_memory_footprint(blka) * 100, "%");
     fprintf(fd, "┠╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┨\n");
     fprintf(fd, "┃ %-20s : %-20s ┃\n", "List Valid",
-            utilities_validate_list(blka) ? "Yes" : "No");
+            utilities_validate_normal_list(blka) ? "Yes" : "No");
     fprintf(fd, "┃ %-20s : %-20s ┃\n", "Free List Valid",
             utilities_validate_free_list(blka) ? "Yes" : "No");
     fprintf(fd, "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n");

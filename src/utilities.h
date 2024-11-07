@@ -54,10 +54,10 @@ bool utilities_validate_allocator_size(blk_allocator *blka);
 /// @return A value between 0 and 1: the higher, the more inefficient.
 float utilities_memory_footprint(blk_allocator *blka);
 
-/// @brief Validate the double list of the allocator.
+/// @brief Validate the normal double list of the allocator.
 /// @param blka The block allocator.
 /// @return true if it is valid, false otherwise.
-bool utilities_validate_list(blk_allocator *blka);
+bool utilities_validate_normal_list(blk_allocator *blka);
 
 /// @brief Validate the double free list of the allocator.
 /// @param blka The block allocator.
