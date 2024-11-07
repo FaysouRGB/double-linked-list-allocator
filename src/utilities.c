@@ -2,6 +2,8 @@
 
 #include <stdlib.h>
 
+#include "convert.h"
+
 bool utilities_validate_calloc(void *ptr, size_t size)
 {
     uint8_t *ptr_p = ptr;
@@ -52,7 +54,9 @@ bool utilities_blka_snapshot(blk_allocator *blka)
 void utilities_print_block(blk_meta *blk, size_t index, FILE *fd)
 {
     void *blk_p = blk;
-    void *data_p = blk->data;
+    uint8_t *temp = BLK_TO_U8(blk);
+    temp += sizeof(blk_meta);
+    void *data_p = temp;
     void *next_p = blk->next;
     void *prev_p = blk->prev;
     void *next_free_p = blk->next_free;
