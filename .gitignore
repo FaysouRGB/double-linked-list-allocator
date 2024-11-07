@@ -1,0 +1,12 @@
+# vscode
+.vscode/
+
+# given binaries
+tests/corruptionproof
+tests/memoryfootprint
+tests/speed
+
+# binaries and output files
+**/a.out
+**/*.o
+**/*.snapshot
