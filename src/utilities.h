@@ -58,6 +58,11 @@ int utilities_number_of_free_blocks(blk_allocator *blka);
 /// @return true if it matches, false otherwise.
 bool utilities_validate_allocator_size(blk_allocator *blka);
 
+/// @brief Get the total allocator size.
+/// @param blka The blockc allocator.
+/// @return The total size mapped.
+size_t utilities_total_allocator_size(blk_allocator *blka);
+
 /// @brief Validate the normal double list of the allocator.
 /// @param blka The block allocator.
 /// @return true if it is valid, false otherwise.

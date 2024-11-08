@@ -1,16 +1,14 @@
-#include "my_malloc.h"
-
 #include "allocator.h"
 
 // Global allocator.
 static blk_allocator *blka;
 
-void *my_malloc(size_t size)
+__attribute__((visibility("default"))) void *malloc(size_t size)
 {
     // Check if we need to create an allocator.
     if (!blka)
     {
-        blka = blk_init_allocator(size);
+        blka = blk_init_allocator();
     }
 
     // Lock the mutex.
@@ -24,7 +22,8 @@ void *my_malloc(size_t size)
 
     return ptr;
 }
-void my_free(void *ptr)
+
+__attribute__((visibility("default"))) void free(void *ptr)
 {
     // If no allocator, do nothing.
     if (!blka)
@@ -42,12 +41,12 @@ void my_free(void *ptr)
     pthread_mutex_unlock(&blka->lock);
 }
 
-void *my_realloc(void *ptr, size_t size)
+__attribute__((visibility("default"))) void *realloc(void *ptr, size_t size)
 {
     // Check if we need to create an allocator.
     if (!blka)
     {
-        blka = blk_init_allocator(size);
+        blka = blk_init_allocator();
     }
 
     // Lock the mutex.
@@ -86,11 +85,11 @@ void *my_realloc(void *ptr, size_t size)
     return ptr;
 }
 
-void *my_calloc(size_t nmemb, size_t size)
+__attribute__((visibility("default"))) void *calloc(size_t nmemb, size_t size)
 {
     if (!blka)
     {
-        blka = blk_init_allocator(size);
+        blka = blk_init_allocator();
     }
 
     // Lock the mutex.

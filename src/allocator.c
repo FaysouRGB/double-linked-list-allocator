@@ -3,9 +3,16 @@
 #include <string.h>
 
 #include "convert.h"
-#include "utilities.h"
 
-// TODO: Free unused maps.
+static void *blk_new_page(size_t size, bool first_one);
+static void blk_try_free_page(blk_allocator *blka, blk_meta *blk);
+static void blk_extend_allocator(blk_allocator *blka, size_t size);
+static void blk_split(blk_meta *blk, size_t size);
+static blk_meta *blk_merge(blk_allocator *blka, blk_meta *blk);
+static uint32_t blk_compute_checksum(blk_meta *blk);
+static void blk_remove_from_free_list(blk_allocator *blka, blk_meta *blk);
+static void blk_remove_from_free_list(blk_allocator *blka, blk_meta *blk);
+static bool blk_validate_checksum(blk_meta *blk);
 
 size_t blk_align_size(size_t size)
 {
@@ -30,7 +37,7 @@ size_t blk_align_size(size_t size)
     return aligned_size;
 }
 
-void *blk_new_page(size_t size, bool first_one)
+static void *blk_new_page(size_t size, bool first_one)
 {
     // Compute size neeeded.
     size_t memory_used = PAGE_SIZE;
@@ -99,9 +106,37 @@ void *blk_new_page(size_t size, bool first_one)
     return addr_p - (first_one ? sizeof(blk_allocator) : 0);
 }
 
-blk_allocator *blk_init_allocator(size_t size)
+blk_allocator *blk_init_allocator(void)
 {
-    return blk_new_page(4096, true);
+    return blk_new_page(0, true);
+}
+
+static void blk_try_free_page(blk_allocator *blka, blk_meta *blk)
+{
+    // Skip first page (double security).
+    if (blka->meta == blk)
+    {
+        return;
+    }
+
+    // Check if the whole page is free and not the first page.
+    if (blk->next && blk->next->garbage && blk->prev && blk->prev->garbage)
+    {
+        // Remove the big block from the free list.
+        blk_remove_from_free_list(blka, blk);
+
+        // Remove it from the normal list.
+        blk->prev->next = blk->next->next;
+        blk->prev->checksum = blk_compute_checksum(blk->prev);
+        if (blk->next->next)
+        {
+            blk->next->next->prev = blk->prev;
+            blk->next->next->checksum = blk_compute_checksum(blk->next->next);
+        }
+
+        // Unmap memory.
+        munmap(BLK_TO_U8(blk), blk->next->garbage);
+    }
 }
 
 void blk_cleanup_allocator(blk_allocator *blka)
@@ -136,11 +171,23 @@ void blk_cleanup_allocator(blk_allocator *blka)
     munmap(blka, blka->size);
 }
 
-void __blk_insert_to_free_list(blk_allocator *blka, blk_meta *blk)
+static void __blk_insert_to_free_list(blk_allocator *blka, blk_meta *blk)
 {
-    blk->next_free = blka->free_list;
-    blk->prev_free = NULL;
+    // Validate that block isn't already in free list.
+    blk_meta *current = blka->free_list;
+    while (current)
+    {
+        if (current == blk)
+        {
+            blk_remove_from_free_list(blka, blk);
+            break;
+        }
 
+        current = current->next_free;
+    }
+
+    // Insert at the front of the list.
+    blk->next_free = blka->free_list;
     if (blka->free_list)
     {
         blka->free_list->prev_free = blk;
@@ -150,7 +197,7 @@ void __blk_insert_to_free_list(blk_allocator *blka, blk_meta *blk)
     blka->free_list = blk;
 }
 
-void blk_extend_allocator(blk_allocator *blka, size_t size)
+static void blk_extend_allocator(blk_allocator *blka, size_t size)
 {
     // Create a new page.
     blk_meta *new_blk = blk_new_page(size, false);
@@ -270,6 +317,8 @@ void blk_free(blk_allocator *blka, void *ptr)
 
     // Compute the checksum of the block.
     blk->checksum = blk_compute_checksum(blk);
+
+    blk_try_free_page(blka, blk);
 }
 
 void *blk_calloc(blk_allocator *blka, size_t size)
@@ -293,59 +342,87 @@ void *blk_realloc(blk_allocator *blka, void *ptr, size_t new_size)
     // Get the block header.
     uint8_t *ptr_p = ptr;
     ptr_p -= sizeof(blk_meta);
-    void *temp = ptr_p;
-    blk_meta *blk = temp;
+    blk_meta *blk = U8_TO_BLK(ptr_p);
 
-    // If the block is big enough, do nothing.
+    // If the block is already big enough, return the same pointer.
     if (blk->size >= new_size)
     {
-        // Return ptr.
         return ptr;
     }
 
-    // If a neighbor is free, merge (and split).
-    if ((blk->next && blk->next->is_free) || (blk->prev && blk->prev->is_free))
+    // Check if the next block is free and has enough space to merge.
+    if (blk->next && blk->next->is_free)
     {
-        // Merge.
-        blk = blk_merge(blka, blk);
+        size_t total_available = blk->size + blk->next->size + sizeof(blk_meta);
 
-        // If we can split, split.
-        size_t aligned_size = blk_align_size(new_size);
-        if (blk->size >= aligned_size + sizeof(blk_meta) + MIN_DATA_SIZE)
+        // If merging with the next block provides enough space, merge and
+        // return the same pointer.
+        if (total_available >= new_size)
         {
-            // Split
-            blk_split(blk, aligned_size);
+            // Remove the next block from the free list before merging.
+            blk_remove_from_free_list(blka, blk->next);
 
-            // Insert the new block into the free list.
-            blk_meta *child = blk->next;
-            __blk_insert_to_free_list(blka, child);
-            child->checksum = blk_compute_checksum(child);
+            // Merge the current block with the next block.
+            blk->size = total_available;
+            blk->next = blk->next->next;
+
+            if (blk->next)
+            {
+                blk->next->prev = blk;
+            }
+
+            // Update the checksum for the merged block.
+            blk->checksum = blk_compute_checksum(blk);
+
+            // Return the same pointer, as we were able to resize in place.
+            return ptr;
         }
-
-        // Compute the block's checksum.
-        blk->checksum = blk_compute_checksum(blk);
-
-        // Return ptr back or a new pointer.
-        return BLK_TO_U8(blk) + sizeof(blk_meta);
     }
 
-    // Else sadly we need to find a new place.
-    void *new_ptr = blk_malloc(blka, new_size);
+    // Try to merge with the previous block if it's free and can accommodate the
+    // new size.
+    if (blk->prev && blk->prev->is_free
+        && blk->prev->size + blk->size + sizeof(blk_meta) >= new_size)
+    {
+        // Remove the current block from the free list before merging.
+        blk_remove_from_free_list(blka, blk);
 
-    // Copy old block data to the new one.
+        // Merge with the previous block.
+        blk_meta *prev = blk->prev;
+        prev->size += blk->size + sizeof(blk_meta);
+
+        // Update the linked list.
+        prev->next = blk->next;
+        if (blk->next)
+        {
+            blk->next->prev = prev;
+        }
+
+        // Now the merged block can be returned.
+        return BLK_TO_U8(blk) + sizeof(blk_meta); // Return the new block.
+    }
+
+    // If we cannot resize in place, allocate a new block.
+    void *new_ptr = blk_malloc(blka, new_size);
+    if (!new_ptr)
+    {
+        return NULL; // Return NULL if allocation fails.
+    }
+
+    // Copy the data from the old block to the new block.
     memcpy(new_ptr, ptr, blk->size);
 
-    // Set the old block to free.
-    blk_free(blka, blk);
+    // Free old block.
+    blk_free(blka, ptr);
 
-    // Compute the block's checksum.
+    // Update the checksum for the freed block.
     blk->checksum = blk_compute_checksum(blk);
 
-    // Return the data pointer.
+    // Return the new pointer.
     return new_ptr;
 }
 
-void blk_split(blk_meta *blk, size_t size)
+static void blk_split(blk_meta *blk, size_t size)
 {
     // Create the new block.
     uint8_t *blk_p = BLK_TO_U8(blk);
@@ -372,48 +449,58 @@ void blk_split(blk_meta *blk, size_t size)
     blk->size = size;
 }
 
-blk_meta *blk_merge(blk_allocator *blka, blk_meta *blk)
+static blk_meta *blk_merge(blk_allocator *blka, blk_meta *blk)
 {
     // Merge with the previous block if it's free.
     if (blk->prev && blk->prev->is_free)
     {
-        // Remove the this block from the free list.
-        blk_remove_from_free_list(blka, blk);
-
-        // Merge with the previous block.
         blk_meta *prev = blk->prev;
+
+        // Remove the previous block from the free list before merging.
+        blk_remove_from_free_list(blka, prev);
+
+        // Merge the current block into the previous block.
+        prev->size += blk->size + sizeof(blk_meta);
         prev->next = blk->next;
-        if (prev->next)
+
+        if (blk->next)
         {
-            prev->next->prev = prev;
+            blk->next->prev = prev;
         }
 
-        prev->size += blk->size + sizeof(blk_meta);
+        // Update checksum for the merged previous block.
+        prev->checksum = blk_compute_checksum(prev);
+
+        // Point to the merged block.
         blk = prev;
     }
 
     // Merge with the next block if it's free.
     if (blk->next && blk->next->is_free)
     {
-        // Remove the next block from the free list.
-        blk_remove_from_free_list(blka, blk->next);
-
-        // Merge with the next block.
         blk_meta *next = blk->next;
+
+        // Remove the next block from the free list before merging.
+        blk_remove_from_free_list(blka, next);
+
+        // Merge the next block into the current block.
+        blk->size += next->size + sizeof(blk_meta);
         blk->next = next->next;
+
         if (next->next)
         {
             next->next->prev = blk;
         }
 
-        blk->size += next->size + sizeof(blk_meta);
+        // Update checksum for the merged current block.
+        blk->checksum = blk_compute_checksum(blk);
     }
 
-    // Return the block.
+    // Return the merged block.
     return blk;
 }
 
-uint32_t blk_compute_checksum(blk_meta *blk)
+static uint32_t blk_compute_checksum(blk_meta *blk)
 {
     // Add every fields except the checksum field.
     uint32_t checksum = 0;
@@ -426,33 +513,33 @@ uint32_t blk_compute_checksum(blk_meta *blk)
     return checksum;
 }
 
-bool blk_validate_checksum(blk_meta *blk)
+static bool blk_validate_checksum(blk_meta *blk)
 {
     // Compare actual and newly computed checksum.
     uint32_t current_checksum = blk_compute_checksum(blk);
     return current_checksum == blk->checksum;
 }
 
-void blk_remove_from_free_list(blk_allocator *blka, blk_meta *blk)
+static void blk_remove_from_free_list(blk_allocator *blka, blk_meta *blk)
 {
-    // Case I: first block of the free list.
     if (blka->free_list == blk)
     {
         blka->free_list = blk->next_free;
+        if (blka->free_list != NULL)
+        {
+            blka->free_list->prev_free = NULL;
+            blka->free_list->checksum = blk_compute_checksum(blka->free_list);
+        }
     }
-    // Case II: in the middle of the list.
-    else if (blk->next_free)
+    else if (blk->prev_free != NULL)
     {
         blk->prev_free->next_free = blk->next_free;
-        blk->prev_free->checksum = blk_compute_checksum(blk->prev_free);
+        if (blk->next_free != NULL)
+        {
+            blk->next_free->prev_free = blk->prev_free;
+            blk->next_free->checksum = blk_compute_checksum(blk->next_free);
+        }
 
-        blk->next_free->prev_free = blk->prev_free;
-        blk->next_free->checksum = blk_compute_checksum(blk->next_free);
-    }
-    // Case III: at the end of the list.
-    else
-    {
-        blk->prev_free->next_free = NULL;
         blk->prev_free->checksum = blk_compute_checksum(blk->prev_free);
     }
 

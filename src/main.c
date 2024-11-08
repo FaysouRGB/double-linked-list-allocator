@@ -8,7 +8,7 @@ int main(void)
     // utilities_print_sizes(stdout);
 
     // Initialize the allocator.
-    blk_allocator *blka = blk_init_allocator(5);
+    blk_allocator *blka = blk_init_allocator();
 
     // Snapshot 0.
     if (!blka || !utilities_blka_snapshot(blka))
@@ -57,18 +57,9 @@ int main(void)
         goto error;
     }
 
-    blk_free(blka, p1);
-    if (!utilities_blka_snapshot(blka))
-    {
-        PRINT_ERROR("utilities_blka_snapshot failed.");
-        goto error;
-    }
-    return 0;
-
     // Calloc p2.
     p2 = blk_calloc(blka, P2_SIZE * 2);
 
-    // Snapshot 5.
     if (!p2 || !utilities_validate_calloc(p2, P2_SIZE * 2))
     {
         PRINT_ERROR("blk_calloc for p2 or utilities_blka_snapshot failed.");

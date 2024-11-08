@@ -1,23 +1,30 @@
 CC = gcc
-CFLAGS = -std=c99 -pedantic -Werror -Wall -Wextra -Wvla
+CPPFLAGS = -D_DEFAULT_SOURCE
+CFLAGS = -Wall -Wextra -Werror -std=c99 -Wvla
+LDFLAGS = -shared
+VPATH = src
 
-SRC_FILES = $(wildcard src/*.c)
-OBJ_FILES = $(patsubst %.c, %.o, $(SRC_FILES))
+TARGET_LIB = libmalloc.so
+OBJS = malloc.o allocator.o convert.o
 
-TARGET = a.out
+all: library
 
-all: $(TARGET)
+library: $(TARGET_LIB)
+$(TARGET_LIB): CFLAGS += -pedantic -fvisibility=hidden -fPIC
+$(TARGET_LIB): LDFLAGS += -Wl,--no-undefined
+$(TARGET_LIB): $(OBJS)
+	$(CC) $(LDFLAGS) -o $@ $^
 
-$(TARGET): $(OBJ_FILES)
-	$(CC) $(CFLAGS) -o $(TARGET) $(OBJ_FILES)
+debug: CFLAGS += -g
+debug: clean $(TARGET_LIB)
 
-%.o: %.c
-	$(CC) $(CFLAGS) -o $@ -c $<
+check: library
+	cp $(TARGET_LIB) tests && tests/testsuite.sh
 
-debug: CFLAGS += -g -fsanitize=address
-debug: $(TARGET)
+main:
+	gcc -o main src/main.c src/malloc.c src/allocator.c src/convert.c src/utilities.c
 
 clean:
-	${RM} -f $(TARGET) $(OBJ_FILES) *.snapshot main
+	$(RM) -f $(TARGET_LIB) $(OBJS) tests/libmalloc.so main *.snapshot
 
-.PHONY: all debug clean
+.PHONY: all library $(TARGET_LIB) clean

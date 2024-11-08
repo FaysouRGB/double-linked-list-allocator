@@ -46,9 +46,6 @@ bool utilities_blka_snapshot(blk_allocator *blka)
     utilities_print_allocator(blka, fd);
     utilities_print_blocks(blka, fd);
 
-    utilities_print_allocator(blka, stdout);
-    utilities_print_blocks(blka, stdout);
-
     fclose(fd);
 
     return true;
@@ -163,14 +160,36 @@ int utilities_number_of_free_blocks(blk_allocator *blka)
 bool utilities_validate_allocator_size(blk_allocator *blka)
 {
     size_t total_memory = sizeof(blk_allocator);
+    size_t allocated_memory = 0;
     struct blk_meta *current = blka->meta;
     while (current)
     {
+        if (current->garbage)
+        {
+            allocated_memory += current->garbage;
+        }
         total_memory += sizeof(blk_meta) + current->size;
         current = current->next;
     }
 
-    return total_memory == blka->size;
+    return total_memory == allocated_memory;
+}
+
+size_t utilities_total_allocator_size(blk_allocator *blka)
+{
+    size_t allocated_memory = 0;
+    struct blk_meta *current = blka->meta;
+    while (current)
+    {
+        if (current->garbage)
+        {
+            allocated_memory += current->garbage;
+        }
+
+        current = current->next;
+    }
+
+    return allocated_memory;
 }
 
 bool utilities_validate_normal_list(blk_allocator *blka)
@@ -240,7 +259,8 @@ void utilities_print_allocator(blk_allocator *blka, FILE *fd)
     fprintf(fd, "┃ %-20s : %-20i ┃\n", "Free Blocks",
             utilities_number_of_free_blocks(blka));
     fprintf(fd, "┠╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┨\n");
-    fprintf(fd, "┃ %-20s : %-20zu ┃\n", "Size (bytes)", blka->size);
+    fprintf(fd, "┃ %-20s : %-20zu ┃\n", "Size (bytes)",
+            utilities_total_allocator_size(blka));
     fprintf(fd, "┃ %-20s : %-20s ┃\n", "Size Valid",
             utilities_validate_allocator_size(blka) ? "Yes" : "No");
     fprintf(fd, "┠╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┨\n");
