@@ -168,4 +168,5 @@ This library can be compiled using itself, to do so: run `make library` then `LD
 │ Total: 10 / 11 Tests Successful                   │
 └───────────────────────────────────────────────────┘
 ```
-<details>
+
+</details>
