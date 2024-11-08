@@ -11,7 +11,6 @@ static void blk_split(blk_meta *blk, size_t size);
 static blk_meta *blk_merge(blk_allocator *blka, blk_meta *blk);
 static uint32_t blk_compute_checksum(blk_meta *blk);
 static void blk_remove_from_free_list(blk_allocator *blka, blk_meta *blk);
-static void blk_remove_from_free_list(blk_allocator *blka, blk_meta *blk);
 
 size_t blk_align_size(size_t size)
 {
