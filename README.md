@@ -1,5 +1,3 @@
-# Double Linked List Memory Allocator
-
 ![Double Linked List Memory Allocator](images/banner.png)
 
 ## Overview
