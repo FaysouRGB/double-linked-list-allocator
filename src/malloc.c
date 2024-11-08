@@ -99,6 +99,9 @@ __attribute__((visibility("default"))) void *calloc(size_t nmemb, size_t size)
     unsigned int total_size;
     if (__builtin_umul_overflow(nmemb, size, &total_size))
     {
+        // Unlock the mutex.
+        pthread_mutex_unlock(&blka->lock);
+    
         // If it overflows, return null.
         return NULL;
     }
