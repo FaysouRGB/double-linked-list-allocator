@@ -12,7 +12,6 @@ static blk_meta *blk_merge(blk_allocator *blka, blk_meta *blk);
 static uint32_t blk_compute_checksum(blk_meta *blk);
 static void blk_remove_from_free_list(blk_allocator *blka, blk_meta *blk);
 static void blk_remove_from_free_list(blk_allocator *blka, blk_meta *blk);
-static bool blk_validate_checksum(blk_meta *blk);
 
 size_t blk_align_size(size_t size)
 {
@@ -513,7 +512,7 @@ static uint32_t blk_compute_checksum(blk_meta *blk)
     return checksum;
 }
 
-static bool blk_validate_checksum(blk_meta *blk)
+bool blk_validate_checksum(blk_meta *blk)
 {
     // Compare actual and newly computed checksum.
     uint32_t current_checksum = blk_compute_checksum(blk);

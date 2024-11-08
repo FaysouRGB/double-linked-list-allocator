@@ -10,3 +10,4 @@ tests/speed
 **/a.out
 **/*.o
 **/*.snapshot
+**/libmalloc.so

@@ -128,7 +128,7 @@ void *blk_realloc(blk_allocator *blka, void *ptr, size_t new_size);
 /// @brief Validate the checksum of the block.
 /// @param blk The block to validate.
 /// @return True if it matches, false otherwise.
-/// static bool blk_validate_checksum(blk_meta *blk);
+bool blk_validate_checksum(blk_meta *blk);
 
 /// @brief Remove the block from the free list.
 /// @param blka The block allocator.
