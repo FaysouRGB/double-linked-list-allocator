@@ -56,10 +56,8 @@ typedef struct blk_allocator blk_allocator;
 
 /// @brief Allocate a page and setup it.
 /// @param size The size needed for this page.
-/// @param first_one If set to yes, create a block allocator at the start of the
-/// page.
 /// @return Return the address of the first block or the block allocator.
-/// static void *blk_new_page(size_t size, bool first_one);
+/// static void *blk_new_page(size_t size);
 
 /// @brief Align the size.
 /// @param size The size value.
@@ -68,8 +66,7 @@ typedef struct blk_allocator blk_allocator;
 
 /// @brief Initialize the allocator.
 /// @param size The size it should be able to hold directly.
-/// @return A new block allocator.
-blk_allocator *blk_init_allocator(void);
+void blk_init_allocator(blk_allocator *blka, size_t size);
 
 /// @brief Try to free the page of blk.
 /// @param blka The block allocator.

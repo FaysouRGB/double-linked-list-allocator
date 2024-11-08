@@ -4,7 +4,7 @@
 
 #include "convert.h"
 
-static void *blk_new_page(size_t size, bool first_one);
+static void *blk_new_page(size_t size);
 static void blk_try_free_page(blk_allocator *blka, blk_meta *blk);
 static void blk_extend_allocator(blk_allocator *blka, size_t size);
 static void blk_split(blk_meta *blk, size_t size);
@@ -35,12 +35,11 @@ size_t blk_align_size(size_t size)
     return aligned_size;
 }
 
-static void *blk_new_page(size_t size, bool first_one)
+static void *blk_new_page(size_t size)
 {
     // Compute size neeeded.
     size_t memory_used = PAGE_SIZE;
-    size_t memory_needed = 2 * sizeof(blk_meta) + blk_align_size(size)
-        + (first_one ? sizeof(blk_allocator) : 0);
+    size_t memory_needed = 2 * sizeof(blk_meta) + blk_align_size(size);
     while (memory_used < memory_needed)
     {
         memory_used += PAGE_SIZE;
@@ -53,35 +52,12 @@ static void *blk_new_page(size_t size, bool first_one)
         return NULL;
     }
 
-    // If it is the first one, initialize the block allocator.
-    if (first_one)
-    {
-        blk_allocator *blka = addr;
-
-        // Reset all bytes of the struct.
-        memset(addr, 0, sizeof(blk_allocator));
-
-        // Linked lists.
-        uint8_t *addr_p = addr;
-        addr_p += sizeof(blk_allocator);
-        blka->meta = U8_TO_BLK(addr_p);
-        blka->free_list = blka->meta;
-
-        // Info.
-        pthread_mutex_init(&blka->lock, NULL);
-        blka->size = memory_used;
-
-        // Set the start at the first block.
-        addr = blka->meta;
-    }
-
     // Create metadata of the first block.
     blk_meta *blk = addr;
 
     // Reset all the bytes.
     memset(addr, 0, sizeof(blk_meta));
-    blk->size = memory_used - (first_one ? sizeof(blk_allocator) : 0)
-        - 2 * sizeof(blk_meta);
+    blk->size = memory_used - 2 * sizeof(blk_meta);
     blk->is_free = true;
 
     // Create the last block.
@@ -101,31 +77,52 @@ static void *blk_new_page(size_t size, bool first_one)
     page_end_blk->checksum = blk_compute_checksum(page_end_blk);
 
     addr_p = addr;
-    return addr_p - (first_one ? sizeof(blk_allocator) : 0);
+    return addr_p;
 }
 
-blk_allocator *blk_init_allocator(void)
+void blk_init_allocator(blk_allocator *blka, size_t size)
 {
-    return blk_new_page(0, true);
+    blka->meta = blk_new_page(size);
+    blka->free_list = blka->meta;
+
+    // Compute size neeeded.
+    size_t memory_used = PAGE_SIZE;
+    size_t memory_needed = 2 * sizeof(blk_meta) + blk_align_size(size);
+    while (memory_used < memory_needed)
+    {
+        memory_used += PAGE_SIZE;
+    }
+
+    blka->size = memory_used;
+    pthread_mutex_init(&blka->lock, NULL);
 }
 
 static void blk_try_free_page(blk_allocator *blka, blk_meta *blk)
 {
-    // Skip first page (double security).
+    bool is_first = false;
     if (blka->meta == blk)
     {
-        return;
+        is_first = true;
     }
 
-    // Check if the whole page is free and not the first page.
-    if (blk->next && blk->next->garbage && blk->prev && blk->prev->garbage)
+    // Check if the whole page is free.
+    if (blk->next && blk->next->garbage
+        && (!blk->prev || (blk->prev && blk->prev->garbage)))
     {
         // Remove the big block from the free list.
         blk_remove_from_free_list(blka, blk);
 
         // Remove it from the normal list.
-        blk->prev->next = blk->next->next;
-        blk->prev->checksum = blk_compute_checksum(blk->prev);
+        if (!is_first)
+        {
+            blk->prev->next = blk->next->next;
+            blk->prev->checksum = blk_compute_checksum(blk->prev);
+        }
+        else
+        {
+            blka->meta = blk->next->next;
+        }
+
         if (blk->next->next)
         {
             blk->next->next->prev = blk->prev;
@@ -198,7 +195,7 @@ static void __blk_insert_to_free_list(blk_allocator *blka, blk_meta *blk)
 static void blk_extend_allocator(blk_allocator *blka, size_t size)
 {
     // Create a new page.
-    blk_meta *new_blk = blk_new_page(size, false);
+    blk_meta *new_blk = blk_new_page(size);
 
     // Get the last block of the previous page.
     blk_meta *last_blk = blka->meta;
