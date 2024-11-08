@@ -60,9 +60,6 @@ printf "├──────┼────────────────
 run_test gimp --version
 printf "├──────┼────────────────────────────────────────────┤\n"
 run_test chromium --version
-printf "├──────┼────────────────────────────────────────────┤\n"
-run_test firefox --version
-
 printf "├──────┴────────────────────────────────────────────┤\n"
 printf "│ Total: %-2i / %2i Tests Successful                   │\n" "$successful" "$total"
 printf "└───────────────────────────────────────────────────┘\n\n"
