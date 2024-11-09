@@ -105,6 +105,11 @@ void utilities_print_block(blk_meta *blk, size_t index, FILE *fd)
 void utilities_print_blocks(blk_allocator *blka, FILE *fd)
 {
     blk_meta *current = blka->meta;
+    if (!current)
+    {
+        return;
+    }
+
     size_t index = 0;
 
     fprintf(fd, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n");
@@ -195,9 +200,9 @@ size_t utilities_total_allocator_size(blk_allocator *blka)
 bool utilities_validate_normal_list(blk_allocator *blka)
 {
     blk_meta *prev = blka->meta;
-    if (prev->prev)
+    if (!prev || prev->prev)
     {
-        return false;
+        return prev;
     }
 
     for (blk_meta *current = prev->next; current; current = current->next)

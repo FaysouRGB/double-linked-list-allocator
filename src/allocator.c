@@ -332,88 +332,68 @@ void *blk_calloc(blk_allocator *blka, size_t size)
     return ptr;
 }
 
+static void *__blk_merge_next(blk_allocator *blka, blk_meta *blk, void *ptr,
+                              size_t new_size)
+{
+    if (blk->next && blk->next->is_free)
+    {
+        size_t total_available = blk->size + blk->next->size + sizeof(blk_meta);
+        if (total_available >= new_size)
+        {
+            blk_remove_from_free_list(blka, blk->next);
+            blk->size = total_available;
+            blk->next = blk->next->next;
+            if (blk->next)
+                blk->next->prev = blk;
+            blk->checksum = blk_compute_checksum(blk);
+            return ptr;
+        }
+    }
+    return NULL;
+}
+
+static void *__blk_merge_prev(blk_allocator *blka, blk_meta *blk,
+                              size_t new_size)
+{
+    if (blk->prev && blk->prev->is_free
+        && blk->prev->size + blk->size + sizeof(blk_meta) >= new_size)
+    {
+        blk_remove_from_free_list(blka, blk);
+        blk_meta *prev = blk->prev;
+        prev->size += blk->size + sizeof(blk_meta);
+        prev->next = blk->next;
+        if (blk->next)
+            blk->next->prev = prev;
+        return BLK_TO_U8(blk) + sizeof(blk_meta);
+    }
+    return NULL;
+}
+
 void *blk_realloc(blk_allocator *blka, void *ptr, size_t new_size)
 {
-    // Get the block header.
     uint8_t *ptr_p = ptr;
     ptr_p -= sizeof(blk_meta);
     blk_meta *blk = U8_TO_BLK(ptr_p);
 
-    // If the block is already big enough, return the same pointer.
     if (blk->size >= new_size)
-    {
         return ptr;
-    }
 
-    // Check if the next block is free and has enough space to merge.
-    if (blk->next && blk->next->is_free)
-    {
-        size_t total_available = blk->size + blk->next->size + sizeof(blk_meta);
+    void *merged_ptr;
+    if ((merged_ptr = __blk_merge_next(blka, blk, ptr, new_size)))
+        return merged_ptr;
+    if ((merged_ptr = __blk_merge_prev(blka, blk, new_size)))
+        return merged_ptr;
 
-        // If merging with the next block provides enough space, merge and
-        // return the same pointer.
-        if (total_available >= new_size)
-        {
-            // Remove the next block from the free list before merging.
-            blk_remove_from_free_list(blka, blk->next);
-
-            // Merge the current block with the next block.
-            blk->size = total_available;
-            blk->next = blk->next->next;
-
-            if (blk->next)
-            {
-                blk->next->prev = blk;
-            }
-
-            // Update the checksum for the merged block.
-            blk->checksum = blk_compute_checksum(blk);
-
-            // Return the same pointer, as we were able to resize in place.
-            return ptr;
-        }
-    }
-
-    // Try to merge with the previous block if it's free and can accommodate the
-    // new size.
-    if (blk->prev && blk->prev->is_free
-        && blk->prev->size + blk->size + sizeof(blk_meta) >= new_size)
-    {
-        // Remove the current block from the free list before merging.
-        blk_remove_from_free_list(blka, blk);
-
-        // Merge with the previous block.
-        blk_meta *prev = blk->prev;
-        prev->size += blk->size + sizeof(blk_meta);
-
-        // Update the linked list.
-        prev->next = blk->next;
-        if (blk->next)
-        {
-            blk->next->prev = prev;
-        }
-
-        // Now the merged block can be returned.
-        return BLK_TO_U8(blk) + sizeof(blk_meta); // Return the new block.
-    }
-
-    // If we cannot resize in place, allocate a new block.
     void *new_ptr = blk_malloc(blka, new_size);
     if (!new_ptr)
-    {
-        return NULL; // Return NULL if allocation fails.
-    }
+        return NULL;
 
-    // Copy the data from the old block to the new block.
     memcpy(new_ptr, ptr, blk->size);
-
-    // Free old block.
     blk_free(blka, ptr);
-
-    // Update the checksum for the freed block.
+    ptr_p = new_ptr;
+    blk = U8_TO_BLK(ptr_p - sizeof(blk_meta));
     blk->checksum = blk_compute_checksum(blk);
 
-    // Return the new pointer.
     return new_ptr;
 }
 

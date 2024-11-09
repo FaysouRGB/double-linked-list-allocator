@@ -22,7 +22,7 @@ check: library
 	cp $(TARGET_LIB) tests && tests/testsuite.sh
 
 main:
-	gcc -o main src/main.c src/malloc.c src/allocator.c src/convert.c src/utilities.c
+	gcc -o main -g src/main.c src/malloc.c src/allocator.c src/convert.c src/utilities.c
 
 clean:
 	$(RM) -f $(TARGET_LIB) $(OBJS) tests/libmalloc.so main *.snapshot
